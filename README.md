@@ -2,9 +2,10 @@
 
 Work in progress relating [StreamCat](http://www2.epa.gov/national-aquatic-resource-surveys/streamcat) data to flow statistics calculated from USGS NWIS data via [dataRetrieval](https://github.com/USGS-R/dataRetrieval).
 
-Currently includes a placeholder shiny app pending updates to the underlying .rds object 
+catFlow_buildData.R creates the data object NWIS_G2_Sc_prelimFlows.rds from the other included data plus functions in streamCatUtils
 
 
+Also includes a placeholder shiny app pending updates to the underlying .rds object 
 
 
 ## Disclaimer
