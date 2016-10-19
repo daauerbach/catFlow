@@ -76,6 +76,96 @@ filter(g2cat, STATE.x != stabb)
 # #8987 by 378, including several redundant metadata features...
 # saveRDS(cfd, "NWIS_G2_Sc_prelimFlows.rds")
 
+pCodeToName[grep("Discharge", pCodeToName$description), 1:2]
+## wrapper helpter to return tbl_df of gages/rows by site features
+## single state allows easy aggregration back up to regions or other groupings
+## only one state allowed at a time by webservice for whatNWISsites
+## and limit on number of sites in one call to whatNWISdata (hence somewhat kludgy factor index in sites.data construction)
+## played with metric calculation here (returning as additional cols)
+## but keeping as separate function for modularity (and potential mclapply)
+## setting statCd ensures only daily mean, which reduces duplicate rows from min/max/instant (http://help.waterdata.usgs.gov/stat_code)
+stateGages = function(stabb
+                      ,endafter = as.Date("1985-01-01")
+                      ,nobs = 365*5
+){
+   sites.all = whatNWISsites(stateCd=stabb, parameterCd = "00060")
+   sites.data = do.call(rbind,
+                        lapply(split(x = sites.all$site_no, f = factor(rep(paste0(letters,rep(1:50,each=26)), each=50, length.out=nrow(sites.all))))
+                               , function(sitevec) whatNWISdata(sitevec, service = "dv", parameterCd = "00060", statCd = "00003")
+                        ))
+   sites.data = tbl_df(filter(sites.data, end_date > endafter & count_nu > nobs))
+   return(sites.data)
+} #end stateGages
+
+# #str(stateGages("RI"))
+# system.time(
+#    gages.st <- setNames(lapply(state.abb[-grep("AK|HI", state.abb)], function(st) stateGages(st))
+#                         , state.abb[-grep("AK|HI", state.abb)])
+# )
+# # #after stat_cd enforcement, still a few non-unique site_no due to idiosyncrasies...
+# # sapply(gages.st, nrow)
+# # sapply(gages.st, function(s) nrow(distinct(s, site_no)))
+# # lapply(gages.st, function(s) filter(s, duplicated(site_no))$site_no)
+# # t(filter(gages.st[["OK"]], site_no == "07334200"))
+# # #distinct() just chooses first, not largest obs count as desired: (distinct(gages.st[["OK"]], site_no) %>% filter(site_no == "07334200"))$count_nu
+# ##So, can clean up by selecting the record with the largest count...
+# ##but this may still blow up in the metrics?
+# gages.st = lapply(gages.st, function(s) {
+#    if(any(duplicated(s$site_no))) {
+#       ds = s$site_no[duplicated(s$site_no)]
+#        ## make a copy of the not-duplicated gages
+#        ## this DOES catch the first occurrence of a duplicated site_no
+#        ## since ds is character not logical...
+#       s2 = filter(s, !(site_no %in% ds))
+#       for(i in unique(ds)) {
+#          s2 = rbind(s2, filter(s, site_no %in% i) %>% slice(which.max(count_nu)))
+#       }
+#       return(s2)
+#    } else {return(s)}
+# })
+# saveRDS(gages.st, "gagesCONUS.rds")
+
+## follow up wrapper to return tbl_df of gages/rows by gage flow metrics; preallocated for certainty
+## for one or a few stats, doesn't seem to make sense to hold the full record
+## keeps it lighter and more reproducible for now
+## lots of other useful info returned in readNWISdv call, including the lat/lon
+## but just holding number of observations, number of missings obs, number of no flow days and a few quantiles
+## began with inner_join() to other metadata before return, but seems to be potential for some duplicated rows/gages
+## so returning just metrics to allow subsequent filter and join/merge
+stateMetrics = function(stg #tbl_df of gages, as returned by stateGages
+                        ,endafter = "1985-01-01"
+                        ,prb = c(0.001, 0.01,0.1,0.25,0.5,0.95,.99)
+){
+   fmet = matrix(numeric(), nrow = nrow(stg), ncol = 3+length(prb)
+                 ,dimnames = list(as.character(stg$site_no), c("nobs","nna","noflow", paste0("pcntl",prb)))
+   )
+   for(s in stg$site_no){
+      q = 0.0283168 * readNWISdv(s, parameterCd = "00060", startDate = endafter)$X_00060_00003
+      fmet[s,] = c(length(q), sum(is.na(q)), sum(q <= 0, na.rm = T)
+                   ,quantile(q, probs = prb, na.rm = T)
+      )
+   }
+   fmet = tbl_df(data.frame(site_no=stg$site_no, data.matrix(fmet), stringsAsFactors = F))
+   return(fmet)
+} #end stateMetrics
+
+#tester: gages.st.met <- setNames(lapply(gages.st[c("DE","RI")], stateMetrics), c("DE","RI"))
+# #again, preallocated due to memory issues
+# #loop fails periodically due to Windows not reclaiming memory
+# #testing gc() shows no effect...so just babysitting
+# setwd("catFlow")
+# gages.st = readRDS("gagesCONUS.rds")
+# #gages.st.met = setNames(lapply(names(gages.st), function(x) NULL), names(gages.st))
+# gages.st.met = readRDS("gagesCONUSmetrics.rds")
+# sapply(gages.st.met, dim)
+# for(s in names(gages.st.met)[sapply(gages.st.met, is.null)]){
+#    print(s)
+#    print(nrow(gages.st[[s]]))
+#    gages.st.met[[s]] = stateMetrics(gages.st[[s]])
+#    saveRDS(gages.st.met, "gagesCONUSmetrics.rds")
+# }
+
+
 
 cfd = readRDS(gzcon(url("https://github.com/daauerbach/catFlow/raw/master/NWIS_G2_Sc_prelimFlows.rds")))
 
